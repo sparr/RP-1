@@ -63,21 +63,31 @@ namespace RP0.Harmony
         // is a check that the current number of active strategies is < this limit. But we use
         // this limit to control programs only, not leaders. So we need to temporarily
         // set the number of active strategies to 0, and then reset it after CanBeActivated finishes.
+        // We also exempt the strategy this leader would be transferred from, if any, from the
+        // conflict check, since otherwise it conflicts on the leader's own tag.
         [HarmonyPrefix]
         [HarmonyPatch("CanBeActivated")]
-        internal static void Prefix_CanBeActivated(Strategy __instance)
+        internal static void Prefix_CanBeActivated(Strategy __instance, out StrategyRP0 __state)
         {
             if (KSP.UI.Screens.Administration.Instance != null)
                 KSP.UI.Screens.Administration.Instance.activeStrategyCount = 0;
+
+            __state = (__instance as StrategyRP0)?.FindTransferSource();
+            PatchStrategySystem.conflictExemptStrategy = __state;
         }
 
         // Now that we're done, reset the active strategy count.
+        // If activating will transfer the leader from another department, say so.
         [HarmonyPostfix]
         [HarmonyPatch("CanBeActivated")]
-        internal static void Postfix_CanBeActivated()
+        internal static void Postfix_CanBeActivated(ref string reason, bool __result, StrategyRP0 __state)
         {
             if (KSP.UI.Screens.Administration.Instance != null)
                 KSP.UI.Screens.Administration.Instance.activeStrategyCount = ProgramHandler.Instance.ActiveProgramSlots;
+
+            PatchStrategySystem.conflictExemptStrategy = null;
+            if (__result && __state != null)
+                reason = Localizer.Format("#rp0_Leaders_Transfer_Info", __state.Department.Title);
         }
 
         // For our Strategy class, replace the basic Activate with a virtual one.

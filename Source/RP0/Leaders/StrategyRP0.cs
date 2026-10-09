@@ -66,6 +66,14 @@ namespace RP0
         /// <returns></returns>
         public override bool CanActivate(ref string reason)
         {
+            StrategyRP0 transferSource = FindTransferSource();
+            if (transferSource != null && !transferSource.CanTransferOut)
+            {
+                double remaining = transferSource.DateActivated + transferSource.TransferOutDuration - Planetarium.GetUniversalTime();
+                reason = Localizer.Format("#rp0_Leaders_Transfer_TooSoon", transferSource.Department.Title, RP0DTUtils.PrintDateDelta(remaining, false));
+                return false;
+            }
+
             if (!CurrencyModifierQueryRP0.RunQuery(TransactionReasonsRP0.StrategySetup, ConfigRP0.SetupCosts, true).CanAfford())
             {
                 reason = Localizer.Format("#rp0_Leaders_Appoint_CannotAfford");
@@ -118,16 +126,69 @@ namespace RP0
             if (!CanBeActivated(out _))
                 return false;
 
-            PerformActivate(true);
+            PerformActivate(true, FindTransferSource());
 
             return true;
         }
 
         /// <summary>
+        /// Finds the active strategy for this same leader in another department, if any.
+        /// Activating this strategy transfers the leader from that one instead of conflicting with it.
+        /// Leaders are matched on RemoveOnDeactivateTag.
+        /// </summary>
+        /// <returns></returns>
+        public StrategyRP0 FindTransferSource()
+        {
+            string tag = ConfigRP0?.RemoveOnDeactivateTag;
+            if (IsActive || string.IsNullOrEmpty(tag))
+                return null;
+
+            foreach (Strategy s in StrategySystem.Instance.Strategies)
+            {
+                if (s != this && s.IsActive && s is StrategyRP0 sR && sR.ConfigRP0?.RemoveOnDeactivateTag == tag)
+                    return sR;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// How long a leader must serve in a department before they can be transferred to another.
+        /// This is the rehire cooldown, and never less than the time during which they can't be removed.
+        /// </summary>
+        public double TransferOutDuration => System.Math.Max(LeastDuration, ConfigRP0?.ReactivateCooldown ?? 0d);
+
+        public bool CanTransferOut => DateActivated + TransferOutDuration <= Planetarium.GetUniversalTime();
+
+        /// <summary>
+        /// Deactivates this strategy as the source of a leader transfer.
+        /// Unlike DeactivateOverride there is no cost and no cooldown.
+        /// The strategy being transferred to handles the recalculations.
+        /// </summary>
+        protected void PerformTransferOut()
+        {
+            isActive = false;
+
+            // Leave no record of a removal, so that the leader can be transferred back.
+            // The shared tag stays marked active and is updated by the strategy being transferred to.
+            dateDeactivated = 0d;
+            Programs.ProgramHandler.Instance.ActivatedStrategies.Remove(ConfigRP0.Name);
+
+            Unregister();
+
+            AlarmHelper.DeleteAllAlarmsWithTitle(ConfigRP0.Title);
+            CareerLog.Instance?.AddLeaderEvent(Config.Name, false, 0d);
+        }
+
+        /// <summary>
         /// Teh
         /// </summary>
-        public void PerformActivate(bool useCurrency)
+        /// <param name="useCurrency"></param>
+        /// <param name="transferFrom">If set, that strategy is deactivated for free</param>
+        public void PerformActivate(bool useCurrency, StrategyRP0 transferFrom = null)
         {
+            transferFrom?.PerformTransferOut();
+
             isActive = true;
             Register();
             dateActivated = Planetarium.GetUniversalTime();
