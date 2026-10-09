@@ -85,6 +85,13 @@ namespace RP0.Harmony
         }
 
         internal static List<Strategy> _activeStrats = new List<Strategy>();
+
+        /// <summary>
+        /// Set by PatchStrategy for the duration of CanBeActivated. This strategy is ignored
+        /// when looking for conflicts, because activating the other will deactivate it.
+        /// </summary>
+        internal static Strategy conflictExemptStrategy;
+
         [HarmonyPrefix]
         [HarmonyPatch("HasConflictingActiveStrategies")]
         internal static bool Prefix_HasConflictingActiveStrategies(StrategySystem __instance, out bool __result, string[] groupTags)
@@ -95,7 +102,7 @@ namespace RP0.Harmony
             while (count-- > 0)
             {
                 Strategy strategy = __instance.Strategies[count];
-                if (strategy.IsActive)
+                if (strategy.IsActive && strategy != conflictExemptStrategy)
                 {
                     _activeStrats.Add(strategy);
                 }

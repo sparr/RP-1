@@ -182,6 +182,9 @@ namespace RP0.Harmony
             spacer2.transform.SetAsFirstSibling();
         }
 
+        // Title color in the strategy list for a leader who can be transferred from another department
+        internal static string TransferColor => XKCDColors.HexFormat.SunYellow;
+
         // We'll cache the strategy list to save a tiny bit of GC
         internal static List<Strategy> _strategies = new List<Strategy>();
 
@@ -276,6 +279,10 @@ namespace RP0.Harmony
                         stratItem.updateTitle(stratItem.title, stratItem.toggleStateChanger.currentState == "ok" ? stratItem.validColor : stratItem.invalidColor);
                         continue;
                     }
+
+                    // Leaders who would be transferred from another department get their own color.
+                    if (stratItem.toggleStateChanger.currentState == "ok" && sw.strategy is StrategyRP0 sR && sR.FindTransferSource() != null)
+                        stratItem.updateTitle(stratItem.title, TransferColor);
                 }
                 stratItem.transform.FindDeepChild("Text").GetComponent<RectTransform>().anchorMin = new Vector2(0.05f, 0f);
             }
@@ -450,6 +457,29 @@ namespace RP0.Harmony
             Administration.Instance.RedrawPanels();
         }
 
+        // Helper for the popup
+        internal static void OnTransferLeaderConfirm(StrategyRP0 source)
+        {
+            Administration admin = Administration.Instance;
+
+            // Stock handles this as it would any other appointment.
+            admin.OnAcceptConfirm();
+
+            // source.IsActive -> transfer wasn't successful
+            if (source.IsActive)
+                return;
+
+            // Stock only adds the new item to the active list, so we have to remove the old one.
+            foreach (UIListItem item in admin.scrollListActive.GetUiListItems())
+            {
+                if (item.GetComponent<UIRadioButton>().Data is Administration.StrategyWrapper sw && sw.strategy == source)
+                {
+                    admin.scrollListActive.RemoveItem(item, true);
+                    break;
+                }
+            }
+        }
+
         [HarmonyPrefix]
         [HarmonyPatch("BtnInputAccept")]
         internal static bool Prefix_BtnInputAccept(Administration __instance, string state)
@@ -545,6 +575,28 @@ namespace RP0.Harmony
                 dlg.HideGUIsWhilePopup();
 
                 return false;
+            }
+
+            // Appointing a leader who is active in another department transfers them.
+            // Stock handles the confirmation of ordinary appointments.
+            if (state == "accept" && __instance.SelectedWrapper.strategy is StrategyRP0 newLeader)
+            {
+                StrategyRP0 source = newLeader.FindTransferSource();
+                if (source != null)
+                {
+                    var dlg = PopupDialog.SpawnPopupDialog(new Vector2(0.5f, 0.5f),
+                        new Vector2(0.5f, 0.5f),
+                        new MultiOptionDialog("StrategyConfirmation",
+                        Localizer.Format("#rp0_Leaders_Transfer_Confirm", source.Department.Title, newLeader.Department.Title),
+                        Localizer.Format("#autoLOC_464288"),
+                        HighLogic.UISkin,
+                        new DialogGUIButton(Localizer.Format("#autoLOC_439839"), () => OnTransferLeaderConfirm(source)),
+                        new DialogGUIButton(Localizer.Format("#autoLOC_439840"), OnPopupDismiss)), persistAcrossScenes: false, HighLogic.UISkin);
+                    dlg.OnDismiss = OnPopupDismiss;
+                    dlg.HideGUIsWhilePopup();
+
+                    return false;
+                }
             }
 
             return true;
